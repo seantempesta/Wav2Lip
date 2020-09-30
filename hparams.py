@@ -1,6 +1,37 @@
 from tensorflow.contrib.training import HParams
 from glob import glob
 import os
+from pathlib import Path
+import random
+
+def repl_test():
+	data_root = '/home/sean/data/AVSpeech'
+	write_to_path = '/home/sean/src/Wav2Lip/filelists'
+	train_split = 0.95
+
+def gen_train_val_lists(data_root, write_to_path, train_split):
+
+	# recursively search for audio.wav files indicating a data path
+	data_paths = []
+	for path in Path(data_root).rglob('audio.wav'):
+		data_paths.append(path.parent)
+
+	# sort randomly
+	random.shuffle(data_paths)
+
+	# split into train/val
+	train_split_num = int(len(data_paths) * train_split)
+	val_split_num = len(data_paths) - train_split_num
+	train = data_paths[0:train_split_num]
+	val = data_paths[train_split_num:]
+
+	# write files to disk
+	with open(os.path.join(write_to_path, 'train.txt'), 'w') as f:
+		for item in train:
+			f.write("%s\n" % item)
+	with open(os.path.join(write_to_path, 'val.txt'), 'w') as f:
+		for item in val:
+			f.write("%s\n" % item)
 
 def get_image_list(data_root, split):
 	filelist = []
@@ -64,15 +95,15 @@ hparams = HParams(
 	batch_size=16,
 	initial_learning_rate=1e-4,
 	nepochs=200000000000000000,  ### ctrl + c, stop whenever eval loss is consistently greater than train loss for ~10 epochs
-	num_workers=16,
+	num_workers=32,
 	checkpoint_interval=3000,
 	eval_interval=3000,
     save_optimizer_state=True,
 
     syncnet_wt=0.0, # is initially zero, will be set automatically to 0.03 later. Leads to faster convergence. 
-	syncnet_batch_size=64,
+	syncnet_batch_size=32,
 	syncnet_lr=1e-4,
-	syncnet_eval_interval=10000,
+	syncnet_eval_interval=1000,
 	syncnet_checkpoint_interval=10000,
 
 	disc_wt=0.07,

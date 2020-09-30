@@ -24,7 +24,7 @@ parser.add_argument('--static', type=bool,
 parser.add_argument('--fps', type=float, help='Can be specified only if input is a static image (default: 25)', 
 					default=25., required=False)
 
-parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0], 
+parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
 					help='Padding (top, bottom, left, right). Please adjust to include chin at least')
 
 parser.add_argument('--face_det_batch_size', type=int, 
@@ -48,6 +48,9 @@ parser.add_argument('--rotate', default=False, action='store_true',
 
 parser.add_argument('--nosmooth', default=False, action='store_true',
 					help='Prevent smoothing face detections over a short temporal window')
+
+argv = ["--checkpoint_path", "wav2lip_gan.pth", "--face",
+        "./sample_data/input_vid_portrait_orig.m4v", "--audio", "./sample_data/input_audio.wav"]
 
 args = parser.parse_args()
 args.img_size = 96
@@ -179,9 +182,10 @@ def load_model(path):
 
 def main():
 	if not os.path.isfile(args.face):
-		fnames = list(glob(os.path.join(args.face, '*.jpg')))
+		fnames = list(glob(os.path.join(args.face, '*.png')))
 		sorted_fnames = sorted(fnames, key=lambda f: int(os.path.basename(f).split('.')[0]))
 		full_frames = [cv2.imread(f) for f in sorted_fnames]
+		fps = args.fps
 
 	elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
 		full_frames = [cv2.imread(args.face)]
@@ -247,7 +251,7 @@ def main():
 	batch_size = args.wav2lip_batch_size
 	gen = datagen(full_frames.copy(), mel_chunks)
 
-	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen, 
+	for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen,
 											total=int(np.ceil(float(len(mel_chunks))/batch_size)))):
 		if i == 0:
 			model = load_model(args.checkpoint_path)
@@ -279,3 +283,10 @@ def main():
 
 if __name__ == '__main__':
 	main()
+
+
+def repl_test():
+	import matplotlib.pyplot as plt
+	plt.imshow(full_frames[0])
+	plt.imshow(p)
+	plt.show()
