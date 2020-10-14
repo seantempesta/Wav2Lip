@@ -42,6 +42,7 @@ def predict(face_alignment_detector, wav2lip_model, images_cv, audio_pydub, args
 def repl_test():
     wav2lip_checkpoint_path = './wav2lip_gan.pth'
     device = "cuda"
+    mouth_mask_path = './mouth_mask.npy'
 
     # init
     face_alignment_detector, wav2lip_model = init(wav2lip_checkpoint_path,device)
@@ -50,6 +51,7 @@ def repl_test():
     argv = ["--wav2lip_checkpoint_path", "wav2lip_gan.pth", "--face",
             "./sample_data/input_vid_portrait_orig.m4v", "--audio", "./sample_data/input_audio.wav"]
     args = api.gen_args(argv)
+    args.pads = [10,10,0,0]
 
     args.face_det_confidence_score_min = 0.8
 
@@ -64,7 +66,7 @@ def repl_test():
     data = api.preprocess_data(face_alignment_detector, images_cv, audio_pydub, args)
     predictions = api.process_in_batches(data, 10,
                                      lambda x: api.process_wav2lip_batch(x, wav2lip_model, args, device="cuda"))
-    final_frames = api.postprocess_wav2lip(images_cv, predictions, data)
+    final_frames = api.postprocess_wav2lip(images_cv, predictions, data, mouth_mask_path)
 
     frame_h, frame_w = final_frames[0].shape[:-1]
     out = cv2.VideoWriter('temp/result.avi',

@@ -13,10 +13,7 @@ from skimage.draw import ellipse
 from sklearn.metrics import euclidean_distances
 from tqdm import tqdm
 from glob import glob
-import torch, face_detection
-from models import Wav2Lip
-
-import face_alignment
+import torch
 
 # constants
 N_MEL_CHANNELS = 80.
@@ -24,12 +21,38 @@ MAX_WAV_VALUE = 32767.0
 MEL_STEP_SIZE = 16
 
 # useful for keeping track of face bounding boxes
-class BoundingBox:
+class BoundingBox(object):
+    """
+    A 2D bounding box
+    """
     def __init__(self, x1:int, y1:int, x2:int, y2:int):
         self.x1 = x1
         self.y1 = y1
         self.x2 = x2
         self.y2 = y2
+
+    # def __init__(self, points):
+    #     if len(points) == 0:
+    #         raise ValueError("Can't compute bounding box of empty list")
+    #
+    #     # standardize to ints
+    #     converted = np.floor(points).astype(np.int)
+    #
+    #     # use argmax to find the min and max boundaries
+    #     c_min = converted.argmin(axis=0)
+    #     c_max = converted.argmax(axis=0)
+    #     self.x1 = converted[c_min[0]][0]
+    #     self.y1 = converted[c_min[1]][1]
+    #     self.x2 = converted[c_max[0]][0]
+    #     self.y2 = converted[c_max[1]][1]
+
+    @property
+    def width(self):
+        return self.x2 - self.x1
+
+    @property
+    def height(self):
+        return self.y2 - self.y1
 
     def __str__(self):
         return "(x1: {0}, y1: {1})\t(x2: {2}, y2: {3})\n".format(self.x1, self.y1, self.x2, self.y2)
@@ -134,9 +157,9 @@ def draw_mouth_elipsis(box, landmarks):
     # now resize back to original proportions
     # TODO: speed this up
     resized = cv2.resize(mouth_mask, (w,h))
-    import matplotlib.pyplot as plt
-    plt.imshow(resized)
-    plt.show()
+    # import matplotlib.pyplot as plt
+    # plt.imshow(resized)
+    # plt.show()
 
     return resized
 
@@ -299,14 +322,14 @@ def process_bounding_boxes(images_cv, frame_id_to_face_detections, pads):
 
     frame_id_to_box = {}
     pady1, pady2, padx1, padx2 = pads
-    for frame_id, face_detection in frame_id_to_face_detections.items():
+    for frame_id, face_detections in frame_id_to_face_detections.items():
         image = images_cv[frame_id]
-        rect = face_detection[0]  # there's only one face
+
+        rect = face_detections[0].astype(np.int)  # there's only one face
         y1 = math.floor(max(0, rect[1] - pady1))
         y2 = math.floor(min(image.shape[0], rect[3] + pady2))
         x1 = math.floor(max(0, rect[0] - padx1))
         x2 = math.floor(min(image.shape[1], rect[2] + padx2))
-
         box = BoundingBox(x1, y1, x2, y2)
         frame_id_to_box[frame_id] = box
 
@@ -327,29 +350,29 @@ def process_faces_and_landmarks(face_alignment_detector, images_cv, args):
     # returns a dict with {frame_id: facebb)
     frame_id_to_face_detections = face_detect_filter(face_detections, args.face_det_confidence_score_min)
 
-    # process the faces for landmarks
-    # returns a dict with {frame_id: landmarks)
-    faces_detected_filtered_keys, faces_detected_filtered_values = zip(*frame_id_to_face_detections.items())
-    images_tensor_filtered = torch.index_select(images_tensor, 0, torch.tensor(np.asarray(faces_detected_filtered_keys)))
-    data = [{"image_tensor": images_tensor_filtered[idx]
-                , "face_detected": faces_detected_filtered_values[idx]} for idx in
-            range(0, len(images_tensor_filtered))]
-    detected_landmarks = process_in_batches(data, args.face_landmark_batch_size,
-                       lambda x: process_landmark_batch(x, face_alignment_detector))
-    frame_id_to_landmarks = dict(zip(faces_detected_filtered_keys, detected_landmarks))
+    # # process the faces for landmarks
+    # # returns a dict with {frame_id: landmarks)
+    # faces_detected_filtered_keys, faces_detected_filtered_values = zip(*frame_id_to_face_detections.items())
+    # images_tensor_filtered = torch.index_select(images_tensor, 0, torch.tensor(np.asarray(faces_detected_filtered_keys)))
+    # data = [{"image_tensor": images_tensor_filtered[idx]
+    #             , "face_detected": faces_detected_filtered_values[idx]} for idx in
+    #         range(0, len(images_tensor_filtered))]
+    # detected_landmarks = process_in_batches(data, args.face_landmark_batch_size,
+    #                    lambda x: process_landmark_batch(x, face_alignment_detector))
+    # frame_id_to_landmarks = dict(zip(faces_detected_filtered_keys, detected_landmarks))
 
     # smooth coordinates and crop out the face from the full frame images
     frame_id_to_box = process_bounding_boxes(images_cv, frame_id_to_face_detections, args.pads)
 
     # crop and resize faces for processing
     frame_id_to_face_cv = {}
-    for idx in faces_detected_filtered_keys:
+    for idx in frame_id_to_face_detections.keys():
         box = frame_id_to_box[idx]
         face = images_cv[idx][box.y1:box.y2, box.x1:box.x2]
         face_resized = cv2.resize(face,  (args.img_size, args.img_size))
         frame_id_to_face_cv[idx] = face_resized
 
-    return frame_id_to_face_detections, frame_id_to_landmarks, frame_id_to_box, frame_id_to_face_cv
+    return frame_id_to_face_detections, frame_id_to_box, frame_id_to_face_cv
 
 
 # convert pydub into float 32 [-1,1] values, create mel spectogram, and split into chunks based on the video fps
@@ -381,8 +404,8 @@ def extract_mels(audio_pydub, video_fps):
 # process all raw data
 def preprocess_data(face_alignment_detector, images_cv, audio_pydub, args):
 
-    # detect faces, landmarks, and crop and resize all faces
-    frame_id_to_face_detections, frame_id_to_landmarks, frame_id_to_box, frame_id_to_face_cv = process_faces_and_landmarks(face_alignment_detector, images_cv, args)
+    # detect faces, and crop and resize all faces
+    frame_id_to_face_detections, frame_id_to_box, frame_id_to_face_cv = process_faces_and_landmarks(face_alignment_detector, images_cv, args)
 
     # process audio into mel_chunks (indexed by frames)
     mels = extract_mels(audio_pydub, args.fps)
@@ -395,7 +418,6 @@ def preprocess_data(face_alignment_detector, images_cv, audio_pydub, args):
             data.append({'frame_id': idx,
                          'img_cv': images_cv[idx],
                          'mel': mels[idx],
-                         'face_landmarks': frame_id_to_landmarks[idx],
                          'face_box': frame_id_to_box[idx],
                          'face_cv': frame_id_to_face_cv[idx],
                          })
@@ -417,7 +439,7 @@ def process_wav2lip_batch(data, wav2lip_model, args, device="cuda"):
     face_cv_masked = face_cv_batch.copy()
     face_cv_masked[:, args.img_size // 2:] = 0
 
-    # concatinate and reshape face and mel batches
+    # concatenate and reshape face and mel batches
     face_cv_batch = np.concatenate((face_cv_masked, face_cv_batch), axis=3) / 255.
     mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
@@ -438,19 +460,21 @@ def process_wav2lip_batch(data, wav2lip_model, args, device="cuda"):
 # - resizes the predicted face to match the original face crop size (96x96x3 -> ?x?x3)
 # - generates a mouth alpha mask using facial landmarks and blends the generated face back into the orignal
 # - merges together original frames with the predicted frames for a final set
-def postprocess_wav2lip(orig_frames, predictions, data):
+def postprocess_wav2lip(images_cv, predictions, data, mouth_mask_path):
+
+    # load a pre-saved mouth_mask (for alpha blending)
+    mouth_mask = np.load(mouth_mask_path)
 
     # get a dictionary for frame id to predictions, face_boxes, faces, and facial landmarks
     frame_id_to_data = {}
     for d_idx, d in enumerate(data):
         frame_id_to_data[d['frame_id']] = {'pred': predictions[d_idx],
-                                           'box': d['face_box'],
-                                           'landmarks': d['face_landmarks']}
+                                           'box': d['face_box']}
 
 
     # Some images didn't have faces and don't need to be processed (just accumulated)
     final_frames = []
-    for frame_id, orig_image in enumerate(orig_frames):
+    for frame_id, orig_image in enumerate(images_cv):
 
         # if the frame id was processed complete post processing and add it to the final frames
         if frame_id in frame_id_to_data:
@@ -458,19 +482,18 @@ def postprocess_wav2lip(orig_frames, predictions, data):
             # deconstruct necessary data
             pred = frame_id_to_data[frame_id]['pred']
             box = frame_id_to_data[frame_id]['box']
-            landmarks = frame_id_to_data[frame_id]['landmarks']
 
             # crop the original image to get the original face
             orig_face = orig_image[box.y1:box.y2, box.x1:box.x2]
 
             # resize the prediction to be it's original size
-            pred_resized = cv2.resize(pred.astype(np.uint8), (box.x2 - box.x1, box.y2 - box.y1))
+            pred_resized = cv2.resize(pred.astype(np.uint8), (box.width, box.height))
 
-            # create an alpha transparency mask around the mouth
-            mouth_mask = draw_mouth_elipsis(box, landmarks[0])
+            # resize the mouth_mask to fit the prediction
+            mouth_mask_resized = cv2.resize(mouth_mask, (box.width, box.height))
 
             # blend using an alpha mask
-            a = mouth_mask[:, :, np.newaxis]
+            a = mouth_mask_resized[:, :, np.newaxis]
             blended = cv2.convertScaleAbs(pred_resized * a + orig_face * (1 - a))
 
             # write the blended image back into a copy of the original image
@@ -703,3 +726,25 @@ def gen_args(argv):
         args.static = True
 
     return args
+
+# create a bounding box based on facial landmarks
+# box = BoundingBox(landmarks[0])
+#   b = frame_id_to_face_detections[frame_id][0].astype(np.int)
+#  box = BoundingBox(b[0], b[1], b[2], b[3])
+
+# import matplotlib.pyplot as plt
+# import matplotlib.patches as patches
+# fig, ax = plt.subplots(1)
+# ax.imshow(image)
+# rect = patches.Rectangle((box.x1, box.y1), box.width, box.height, linewidth=1, edgecolor='r', facecolor='none')
+# ax.add_patch(rect)
+# test = frame_id_to_face_detections[frame_id][0]
+# test_rect = patches.Rectangle((test[0],test[1]),test[2] - test[0], test[3] - test[1],  linewidth=1, edgecolor='b', facecolor='none')
+# ax.add_patch(test_rect)
+# plt.show()
+
+# # expand the bounding box boundaries so the bottom half of the box contains the nose down
+# center_nose_to_chin_dist = box.y2 - landmarks[0][30][1]
+# if landmarks[0][30][1] - box.y1
+#
+#
