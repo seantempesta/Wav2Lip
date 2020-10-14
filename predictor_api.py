@@ -1,24 +1,24 @@
 import math
 import tempfile
 import urllib
-from os import listdir, path
 from urllib.parse import urlparse
-
 import numpy as np
 import scipy, cv2, os, sys, argparse, audio
-import json, subprocess, random, string
-
 from pydub import AudioSegment
-from skimage.draw import ellipse
-from sklearn.metrics import euclidean_distances
 from tqdm import tqdm
-from glob import glob
 import torch
+# from os import listdir, path
+# import json, subprocess, random, string
+# from glob import glob
+# from skimage.draw import ellipse
+# from sklearn.metrics import euclidean_distances
 
 # constants
+AUDIO_FRAME_RATE = 16000
 N_MEL_CHANNELS = 80.
 MAX_WAV_VALUE = 32767.0
 MEL_STEP_SIZE = 16
+WAV2LIP_IMG_SIZE = 96
 
 # useful for keeping track of face bounding boxes
 class BoundingBox(object):
@@ -105,170 +105,6 @@ def download_and_extract_audio_and_video_frames(video_url):
 
             return orig_audio_pydub, orig_video_frames, orig_video_fps
 
-# landmarks
-#
-# center nose = 30
-# bottom nose = 33
-# left cheeck = 4
-# right cheek = 12
-# bottom face = 8
-def draw_mouth_elipsis(box, landmarks):
-
-    # rescale the landmark points to be [0-1]
-    h = box.y2 - box.y1
-    w = box.x2 - box.x1
-
-    # converts points to be relative
-    def normalize(landmark):
-        return (landmark - [box.x1, box.y1]) / [w, h]
-
-    center_nose = normalize(landmarks[30])
-    top_edge = normalize(landmarks[33])
-    bottom_edge = normalize(landmarks[8])
-    left_edge = normalize(landmarks[4])
-    right_edge = normalize(landmarks[12])
-    c, r = normalize(landmarks[62])
-    c_radius = min(c - left_edge[0], right_edge[0] - c)
-    r_radius = max(r - top_edge[1], bottom_edge[1] - r)
-
-    # create an empty image mask at 1/10th the size
-    mh = int(h / 10)
-    mw = int(w / 10)
-    mouth_mask = np.zeros((mh, mw))
-
-    # fill ellipse on the smaller mask
-    rr, cc = ellipse(r * mh, c * mw, r_radius * mh, c_radius * mw, mouth_mask.shape)
-
-    # calculate euclidean distances in one pass
-    point_sets = np.asarray(list(zip(rr, cc)))
-    distances = euclidean_distances(point_sets, [[r * mh, c * mw]])
-    distances_scale_min = distances.max() * 0.70
-    distances[distances > distances_scale_min] = distances[distances > distances_scale_min] * 1.3
-    mouth_mask[rr, cc] = distances.flatten()
-
-
-    # rescale to the max value and invert
-    mouth_mask *= 1.0 / mouth_mask.max()
-    mouth_mask[rr, cc] = 1 - mouth_mask[rr, cc]
-
-    # set any values above the nose to 0
-    mouth_mask[0:int(center_nose[1] * mh), :] = 0
-
-    # now resize back to original proportions
-    # TODO: speed this up
-    resized = cv2.resize(mouth_mask, (w,h))
-    # import matplotlib.pyplot as plt
-    # plt.imshow(resized)
-    # plt.show()
-
-    return resized
-
-def create_mask(images_cv, frame_id_to_landmarks, frame_id_to_box):
-    import numpy as np
-    from matplotlib import pyplot as plt
-
-    import matplotlib.pyplot as plt
-
-    from skimage.draw import line, polygon, circle, ellipse
-    import numpy as np
-
-    img = np.zeros((500, 500, 1), 'uint8')
-
-
-
-    # for each frame with landmarks
-    for f_id, landmarks in frame_id_to_landmarks.items():
-
-        # using the face bounding box make the lower half of the face_mask to be NaN
-        box = frame_id_to_box[f_id]
-
-        # create an empty image mask
-        h = box.y2 - box.y1
-        w = box.x2 - box.x1
-        mouth_mask = np.zeros((h, w))
-
-        # draw an oval from left cheek to right cheek and nose tip to chin
-        plt.imshow(mouth_mask)
-
-        # Translate landmark coordinates to the bounding box
-        for p_idx, prediction in enumerate(frame_id_to_landmarks[f_id][0]):
-            x = math.floor(prediction[0]) - box.x1
-            y = math.floor(prediction[1]) - box.y1
-
-            plt.text(x, y, str(p_idx), fontsize=5)
-
-            # large oval
-            # bottom nose = 33
-            # left cheeck = 4
-            # right cheek = 12
-            # bottom face = 8
-
-            # smaller oval
-            # left lips = 48
-            # right lips = 54
-            # center = 62
-
-            if p_idx > 48:
-                mouth_mask[y, x] = 255
-            else:
-                mouth_mask[y, x] = 0
-
-        plt.show()
-
-        # set the lower half of the face to nan
-        box_y_mid = box.y1 + ((box.y2 - box.y1) // 2)
-        mouth_mask[box_y_mid:box.y2, box.x1:box.x2] = np.nan
-
-
-        # crop to the face
-        mouth_mask = mouth_mask[box.y1:box.y2, box.x1:box.x2]
-
-        # resize to 96x96
-        #mouth_mask_img = cv2.from(mouth_mask)
-        # cv2.cvtColor(mouth_mask, cv2.COLOR_GRAY2BGR)
-        # mask_gray = cv2.normalize(src=mouth_mask, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX,
-        #                           dtype=cv2.CV_8UC1)
-
-        # mask invalid values
-        # x = np.arange(0, mouth_mask.shape[1])
-        # y = np.arange(0, mouth_mask.shape[0])
-        # array = np.ma.masked_invalid(mouth_mask)
-        # xx, yy = np.meshgrid(x, y)
-        # x1 = xx[~array.mask]
-        # y1 = yy[~array.mask]
-        # newarr = array[~array.mask]
-        #
-        # GD1 = interpolate.griddata((x1, y1), newarr.ravel(),
-        #                            (xx, yy),
-        #                            method='linear')
-        #
-        # plt.imshow(mouth_mask, interpolation='nearest')
-        # plt.show()
-
-
-       #
-       # from scipy import interpolate
-       # x = np.arange(-5.01, 5.01, 0.25)
-       # y = np.arange(-5.01, 5.01, 0.25)
-       # xx, yy = np.meshgrid(x, y)
-       # z = np.sin(xx ** 2 + yy ** 2)
-       # f = interpolate.interp2d(x, y, z, kind='cubic')
-       #
-
-
-    #
-    #
-    #
-    # # create masks setting 1 values at mouth coordinates
-    # for b_idx, image_batch in enumerate(images_tensor):
-    #     image = image_batch.permute([1,2,0])
-    #     plt.imshow(image)
-    #     for p_idx, prediction in enumerate(frame_id_to_landmarks[b_idx][0]):
-    #         if p_idx > 48:
-    #             plt.text(prediction[0], prediction[1], str(p_idx),  fontsize=5)
-    #             print(prediction)
-    #     plt.show()
-
 
 # generic function for processing data at a specified batch size
 # If an out of memory error occurs, batch size is cut in half and retried
@@ -336,19 +172,19 @@ def process_bounding_boxes(images_cv, frame_id_to_face_detections, pads):
     return frame_id_to_box
 
 
-def process_faces_and_landmarks(face_alignment_detector, images_cv, args):
+def process_faces(face_alignment_detector, images_cv, face_det_batch_size, face_det_confidence_score_min, pads):
 
     # convert cv2 BGR images to a Pytorch Tensor ready for batch processing (b_c_h_w RGB)
     images_tensor = torch.from_numpy(np.asarray(images_cv.copy())).permute(0, 3, 1, 2)[:, [2, 1, 0], :, :]
 
     # process face detection on all images
-    face_detections = process_in_batches(images_tensor, args.face_det_batch_size,
+    face_detections = process_in_batches(images_tensor, face_det_batch_size,
                                          lambda x: face_alignment_detector.face_detector.detect_from_batch(x))
 
     # only keep the highest confidence score for bounding boxes
     # (multiple faces could be detected per image, but this keeps things simple)
     # returns a dict with {frame_id: facebb)
-    frame_id_to_face_detections = face_detect_filter(face_detections, args.face_det_confidence_score_min)
+    frame_id_to_face_detections = face_detect_filter(face_detections, face_det_confidence_score_min)
 
     # # process the faces for landmarks
     # # returns a dict with {frame_id: landmarks)
@@ -362,14 +198,14 @@ def process_faces_and_landmarks(face_alignment_detector, images_cv, args):
     # frame_id_to_landmarks = dict(zip(faces_detected_filtered_keys, detected_landmarks))
 
     # smooth coordinates and crop out the face from the full frame images
-    frame_id_to_box = process_bounding_boxes(images_cv, frame_id_to_face_detections, args.pads)
+    frame_id_to_box = process_bounding_boxes(images_cv, frame_id_to_face_detections, pads)
 
     # crop and resize faces for processing
     frame_id_to_face_cv = {}
     for idx in frame_id_to_face_detections.keys():
         box = frame_id_to_box[idx]
         face = images_cv[idx][box.y1:box.y2, box.x1:box.x2]
-        face_resized = cv2.resize(face,  (args.img_size, args.img_size))
+        face_resized = cv2.resize(face,  (WAV2LIP_IMG_SIZE, WAV2LIP_IMG_SIZE))
         frame_id_to_face_cv[idx] = face_resized
 
     return frame_id_to_face_detections, frame_id_to_box, frame_id_to_face_cv
@@ -377,7 +213,7 @@ def process_faces_and_landmarks(face_alignment_detector, images_cv, args):
 
 # convert pydub into float 32 [-1,1] values, create mel spectogram, and split into chunks based on the video fps
 def extract_mels(audio_pydub, video_fps):
-    audio_16000 = audio_pydub.set_frame_rate(16000)
+    audio_16000 = audio_pydub.set_frame_rate(AUDIO_FRAME_RATE)
     audio_np = np.array(audio_16000.get_array_of_samples(), dtype="float32")
     audio_f32 = audio_np / MAX_WAV_VALUE
     mel = audio.melspectrogram(audio_f32)
@@ -402,13 +238,14 @@ def extract_mels(audio_pydub, video_fps):
 
 
 # process all raw data
-def preprocess_data(face_alignment_detector, images_cv, audio_pydub, args):
+def preprocess_data(face_alignment_detector, images_cv, audio_pydub, video_fps, face_det_batch_size, face_det_confidence_score_min, pads):
 
     # detect faces, and crop and resize all faces
-    frame_id_to_face_detections, frame_id_to_box, frame_id_to_face_cv = process_faces_and_landmarks(face_alignment_detector, images_cv, args)
+    frame_id_to_face_detections, frame_id_to_box, frame_id_to_face_cv = \
+        process_faces(face_alignment_detector, images_cv, face_det_batch_size, face_det_confidence_score_min, pads)
 
     # process audio into mel_chunks (indexed by frames)
-    mels = extract_mels(audio_pydub, args.fps)
+    mels = extract_mels(audio_pydub, video_fps)
 
     # prep the data for processing
     data = []
@@ -426,7 +263,7 @@ def preprocess_data(face_alignment_detector, images_cv, audio_pydub, args):
 
 
 # produces predictions of a single batch
-def process_wav2lip_batch(data, wav2lip_model, args, device="cuda"):
+def process_wav2lip_batch(data, wav2lip_model, device="cuda"):
 
     # unpack the data for the batch
     mel_batch = [d['mel'] for d in data]
@@ -437,7 +274,7 @@ def process_wav2lip_batch(data, wav2lip_model, args, device="cuda"):
 
     # create an image mask covering the bottom of the face
     face_cv_masked = face_cv_batch.copy()
-    face_cv_masked[:, args.img_size // 2:] = 0
+    face_cv_masked[:, WAV2LIP_IMG_SIZE // 2:] = 0
 
     # concatenate and reshape face and mel batches
     face_cv_batch = np.concatenate((face_cv_masked, face_cv_batch), axis=3) / 255.
@@ -511,221 +348,6 @@ def postprocess_wav2lip(images_cv, predictions, data, mouth_mask_path):
 
 
 
-    # blend the predicted image with the original using a generated face mask using landmarks
-    frame_id_to_final_cv = {}
-    for frame_id, pred, orig_img, box, landmarks in zip(frame_id_batch, predictions, img_cv_batch, face_box_batch, face_landmarks_batch):
-
-        # resize the prediction to be it's original size
-        pred_resized = cv2.resize(pred.astype(np.uint8), (box.x2 - box.x1, box.y2 - box.y1))
-
-        # get the original face
-        orig_face = orig_img[box.y1:box.y2, box.x1:box.x2]
-
-        # create an alpha transparency mask around the mouth
-        mouth_mask = draw_mouth_elipsis(box, landmarks[0])
-
-        # blend using an alpha mask
-        a = mouth_mask[:,:, np.newaxis]
-        blended = cv2.convertScaleAbs(pred_resized * a + orig_face * (1 - a))
-
-        # write the blended image back into a copy of the original image
-        new_img = orig_img.copy()
-        new_img[box.y1:box.y2, box.x1:box.x2] = blended
-
-        # save the new image
-        frame_id_to_final_cv[frame_id] = new_img
-
-    return frame_id_to_final_cv
-
-
-
-def repl_test():
-    wav2lip_checkpoint_path = './wav2lip_gan.pth'
-    device = "cuda"
-
-    # init
-    # face_alignment_detector, wav2lip_model = init(wav2lip_checkpoint_path, device)
-
-    # load tmp data
-    argv = ["--wav2lip_checkpoint_path", "wav2lip_gan.pth", "--face",
-            "./sample_data/input_vid_portrait_orig.m4v", "--audio", "./sample_data/input_audio.wav"]
-    args = gen_args(argv)
-
-    video_path = './sample_data/input_vid_portrait_orig.m4v'
-    images_cv, orig_video_fps = extract_video_frames(video_path)
-    args.fps = orig_video_fps
-    audio_path = "./sample_data/input_audio.wav"
-    audio_pydub = AudioSegment.from_wav(audio_path)
-
-    # predictor
-    # data = preprocess_data(face_alignment_detector, images_cv, audio_pydub, args)
-    #
-    # predictions = process_in_batches(data, args.wav2lip_batch_size,
-    #                                         lambda x: process_wav2lip_batch(x, wav2lip_model, args, device="cuda"))
-
-
-def main_(args):
-    if not os.path.isfile(args.face):
-        fnames = list(glob(os.path.join(args.face, '*.png')))
-        sorted_fnames = sorted(fnames, key=lambda f: int(os.path.basename(f).split('.')[0]))
-        full_frames = [cv2.imread(f) for f in sorted_fnames]
-        fps = args.fps
-
-    elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-        full_frames = [cv2.imread(args.face)]
-        fps = args.fps
-
-    else:
-        video_stream = cv2.VideoCapture(args.face)
-        fps = video_stream.get(cv2.CAP_PROP_FPS)
-
-        print('Reading video frames...')
-
-        full_frames = []
-        while 1:
-            still_reading, frame = video_stream.read()
-            if not still_reading:
-                video_stream.release()
-                break
-            if args.resize_factor > 1:
-                frame = cv2.resize(frame, (frame.shape[1] // args.resize_factor, frame.shape[0] // args.resize_factor))
-
-            if args.rotate:
-                frame = cv2.rotate(frame, cv2.cv2.ROTATE_90_CLOCKWISE)
-
-            y1, y2, x1, x2 = args.crop
-            if x2 == -1: x2 = frame.shape[1]
-            if y2 == -1: y2 = frame.shape[0]
-
-            frame = frame[y1:y2, x1:x2]
-
-            full_frames.append(frame)
-
-    print("Number of frames available for inference: " + str(len(full_frames)))
-
-    if not args.audio.endswith('.wav'):
-        print('Extracting raw audio...')
-        command = 'ffmpeg -y -i {} -strict -2 {}'.format(args.audio, 'temp/temp.wav')
-
-        subprocess.call(command, shell=True)
-        args.audio = 'temp/temp.wav'
-
-    wav = audio.load_wav(args.audio, 16000)
-    mel = audio.melspectrogram(wav)
-    print(mel.shape)
-
-    if np.isnan(mel.reshape(-1)).sum() > 0:
-        raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
-
-    mel_chunks = []
-    mel_idx_multiplier = 80. / fps
-    i = 0
-    while 1:
-        start_idx = int(i * mel_idx_multiplier)
-        if start_idx + MEL_STEP_SIZE > len(mel[0]):
-            mel_chunks.append(mel[:, len(mel[0]) - MEL_STEP_SIZE:])
-            break
-        mel_chunks.append(mel[:, start_idx: start_idx + MEL_STEP_SIZE])
-        i += 1
-
-    print("Length of mel chunks: {}".format(len(mel_chunks)))
-
-    full_frames = full_frames[:len(mel_chunks)]
-
-    return full_frames, mel_chunks
-
-    batch_size = args.wav2lip_batch_size
-    gen = datagen(full_frames.copy(), mel_chunks)
-
-    for i, (img_batch, mel_batch, frames, coords) in enumerate(tqdm(gen,
-                                                                    total=int(
-                                                                        np.ceil(float(len(mel_chunks)) / batch_size)))):
-        if i == 0:
-            model = load_model(args.checkpoint_path)
-            print("Model loaded")
-
-            frame_h, frame_w = full_frames[0].shape[:-1]
-            out = cv2.VideoWriter('temp/result.avi',
-                                  cv2.VideoWriter_fourcc(*'DIVX'), fps, (frame_w, frame_h))
-
-        img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
-        mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
-
-        with torch.no_grad():
-            pred = model(mel_batch, img_batch)
-
-        pred = pred.cpu().numpy().transpose(0, 2, 3, 1) * 255.
-
-        for p, f, c in zip(pred, frames, coords):
-            y1, y2, x1, x2 = c
-            p = cv2.resize(p.astype(np.uint8), (x2 - x1, y2 - y1))
-
-            f[y1:y2, x1:x2] = p
-            out.write(f)
-
-    out.release()
-
-    command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/result.avi', args.outfile)
-    subprocess.call(command, shell=True)
-    return True
-
-
-def gen_args(argv):
-
-    parser = argparse.ArgumentParser(description='Inference code to lip-sync videos in the wild using Wav2Lip models')
-
-    parser.add_argument('--wav2lip_checkpoint_path', type=str,
-                        help='Name of saved checkpoint to load weights from', required=True)
-
-    parser.add_argument('--face', type=str,
-                        help='Filepath of video/image that contains faces to use', required=True)
-    parser.add_argument('--audio', type=str,
-                        help='Filepath of video/audio file to use as raw audio source', required=True)
-    parser.add_argument('--outfile', type=str, help='Video path to save result. See default for an e.g.',
-                        default='results/result_voice.mp4')
-
-    parser.add_argument('--static', type=bool,
-                        help='If True, then use only first video frame for inference', default=False)
-    parser.add_argument('--fps', type=float, help='Can be specified only if input is a static image (default: 25)',
-                        default=25., required=False)
-
-    parser.add_argument('--pads', nargs='+', type=int, default=[0, 10, 0, 0],
-                        help='Padding (top, bottom, left, right). Please adjust to include chin at least')
-
-    parser.add_argument('--face_det_batch_size', type=int,
-                        help='Batch size for face detection', default=16)
-    parser.add_argument('--face_det_confidence_score_min', type=int,
-                        help='Minimum score to count as a face', default=0.90)
-    parser.add_argument('--face_landmark_batch_size', type=int,
-                        help='Batch size for face landmarks', default=16)
-    parser.add_argument('--wav2lip_batch_size', type=int, help='Batch size for Wav2Lip model(s)', default=128)
-
-    parser.add_argument('--resize_factor', default=1, type=int,
-                        help='Reduce the resolution by this factor. Sometimes, best results are obtained at 480p or 720p')
-
-    parser.add_argument('--crop', nargs='+', type=int, default=[0, -1, 0, -1],
-                        help='Crop video to a smaller region (top, bottom, left, right). Applied after resize_factor and rotate arg. '
-                             'Useful if multiple face present. -1 implies the value will be auto-inferred based on height, width')
-
-    parser.add_argument('--box', nargs='+', type=int, default=[-1, -1, -1, -1],
-                        help='Specify a constant bounding box for the face. Use only as a last resort if the face is not detected.'
-                             'Also, might work only if the face is not moving around much. Syntax: (top, bottom, left, right).')
-
-    parser.add_argument('--rotate', default=False, action='store_true',
-                        help='Sometimes videos taken from a phone can be flipped 90deg. If true, will flip video right by 90deg.'
-                             'Use if you get a flipped result, despite feeding a normal looking video')
-
-    parser.add_argument('--nosmooth', default=False, action='store_true',
-                        help='Prevent smoothing face detections over a short temporal window')
-
-
-    args = parser.parse_args(argv)
-    args.img_size = 96
-
-    if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-        args.static = True
-
-    return args
 
 # create a bounding box based on facial landmarks
 # box = BoundingBox(landmarks[0])
@@ -748,3 +370,167 @@ def gen_args(argv):
 # if landmarks[0][30][1] - box.y1
 #
 #
+#
+# # landmarks
+# #
+# # center nose = 30
+# # bottom nose = 33
+# # left cheeck = 4
+# # right cheek = 12
+# # bottom face = 8
+# def draw_mouth_elipsis(box, landmarks):
+#
+#     # rescale the landmark points to be [0-1]
+#     h = box.y2 - box.y1
+#     w = box.x2 - box.x1
+#
+#     # converts points to be relative
+#     def normalize(landmark):
+#         return (landmark - [box.x1, box.y1]) / [w, h]
+#
+#     center_nose = normalize(landmarks[30])
+#     top_edge = normalize(landmarks[33])
+#     bottom_edge = normalize(landmarks[8])
+#     left_edge = normalize(landmarks[4])
+#     right_edge = normalize(landmarks[12])
+#     c, r = normalize(landmarks[62])
+#     c_radius = min(c - left_edge[0], right_edge[0] - c)
+#     r_radius = max(r - top_edge[1], bottom_edge[1] - r)
+#
+#     # create an empty image mask at 1/10th the size
+#     mh = int(h / 10)
+#     mw = int(w / 10)
+#     mouth_mask = np.zeros((mh, mw))
+#
+#     # fill ellipse on the smaller mask
+#     rr, cc = ellipse(r * mh, c * mw, r_radius * mh, c_radius * mw, mouth_mask.shape)
+#
+#     # calculate euclidean distances in one pass
+#     point_sets = np.asarray(list(zip(rr, cc)))
+#     distances = euclidean_distances(point_sets, [[r * mh, c * mw]])
+#     distances_scale_min = distances.max() * 0.70
+#     distances[distances > distances_scale_min] = distances[distances > distances_scale_min] * 1.3
+#     mouth_mask[rr, cc] = distances.flatten()
+#
+#
+#     # rescale to the max value and invert
+#     mouth_mask *= 1.0 / mouth_mask.max()
+#     mouth_mask[rr, cc] = 1 - mouth_mask[rr, cc]
+#
+#     # set any values above the nose to 0
+#     mouth_mask[0:int(center_nose[1] * mh), :] = 0
+#
+#     # now resize back to original proportions
+#     # TODO: speed this up
+#     resized = cv2.resize(mouth_mask, (w,h))
+#     # import matplotlib.pyplot as plt
+#     # plt.imshow(resized)
+#     # plt.show()
+#
+#     return resized
+#
+# def create_mask(images_cv, frame_id_to_landmarks, frame_id_to_box):
+#     import numpy as np
+#     from matplotlib import pyplot as plt
+#
+#     import matplotlib.pyplot as plt
+#
+#     from skimage.draw import line, polygon, circle, ellipse
+#     import numpy as np
+#
+#     img = np.zeros((500, 500, 1), 'uint8')
+#
+#
+#
+#     # for each frame with landmarks
+#     for f_id, landmarks in frame_id_to_landmarks.items():
+#
+#         # using the face bounding box make the lower half of the face_mask to be NaN
+#         box = frame_id_to_box[f_id]
+#
+#         # create an empty image mask
+#         h = box.y2 - box.y1
+#         w = box.x2 - box.x1
+#         mouth_mask = np.zeros((h, w))
+#
+#         # draw an oval from left cheek to right cheek and nose tip to chin
+#         plt.imshow(mouth_mask)
+#
+#         # Translate landmark coordinates to the bounding box
+#         for p_idx, prediction in enumerate(frame_id_to_landmarks[f_id][0]):
+#             x = math.floor(prediction[0]) - box.x1
+#             y = math.floor(prediction[1]) - box.y1
+#
+#             plt.text(x, y, str(p_idx), fontsize=5)
+#
+#             # large oval
+#             # bottom nose = 33
+#             # left cheeck = 4
+#             # right cheek = 12
+#             # bottom face = 8
+#
+#             # smaller oval
+#             # left lips = 48
+#             # right lips = 54
+#             # center = 62
+#
+#             if p_idx > 48:
+#                 mouth_mask[y, x] = 255
+#             else:
+#                 mouth_mask[y, x] = 0
+#
+#         plt.show()
+#
+#         # set the lower half of the face to nan
+#         box_y_mid = box.y1 + ((box.y2 - box.y1) // 2)
+#         mouth_mask[box_y_mid:box.y2, box.x1:box.x2] = np.nan
+#
+#
+#         # crop to the face
+#         mouth_mask = mouth_mask[box.y1:box.y2, box.x1:box.x2]
+#
+#         # resize to 96x96
+#         #mouth_mask_img = cv2.from(mouth_mask)
+#         # cv2.cvtColor(mouth_mask, cv2.COLOR_GRAY2BGR)
+#         # mask_gray = cv2.normalize(src=mouth_mask, dst=None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX,
+#         #                           dtype=cv2.CV_8UC1)
+#
+#         # mask invalid values
+#         # x = np.arange(0, mouth_mask.shape[1])
+#         # y = np.arange(0, mouth_mask.shape[0])
+#         # array = np.ma.masked_invalid(mouth_mask)
+#         # xx, yy = np.meshgrid(x, y)
+#         # x1 = xx[~array.mask]
+#         # y1 = yy[~array.mask]
+#         # newarr = array[~array.mask]
+#         #
+#         # GD1 = interpolate.griddata((x1, y1), newarr.ravel(),
+#         #                            (xx, yy),
+#         #                            method='linear')
+#         #
+#         # plt.imshow(mouth_mask, interpolation='nearest')
+#         # plt.show()
+#
+#
+#        #
+#        # from scipy import interpolate
+#        # x = np.arange(-5.01, 5.01, 0.25)
+#        # y = np.arange(-5.01, 5.01, 0.25)
+#        # xx, yy = np.meshgrid(x, y)
+#        # z = np.sin(xx ** 2 + yy ** 2)
+#        # f = interpolate.interp2d(x, y, z, kind='cubic')
+#        #
+#
+#
+#     #
+#     #
+#     #
+#     # # create masks setting 1 values at mouth coordinates
+#     # for b_idx, image_batch in enumerate(images_tensor):
+#     #     image = image_batch.permute([1,2,0])
+#     #     plt.imshow(image)
+#     #     for p_idx, prediction in enumerate(frame_id_to_landmarks[b_idx][0]):
+#     #         if p_idx > 48:
+#     #             plt.text(prediction[0], prediction[1], str(p_idx),  fontsize=5)
+#     #             print(prediction)
+#     #     plt.show()

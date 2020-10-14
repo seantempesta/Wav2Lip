@@ -2,13 +2,10 @@ import subprocess
 import cv2
 import face_alignment
 import torch
-import json
 from pydub import AudioSegment
 
 from models import Wav2Lip
 import predictor_api as api
-# CONSTANTS
-AUDIO_FRAME_RATE = 16000
 
 
 def init(wav2lip_checkpoint_path, device="cuda"):
@@ -33,51 +30,48 @@ def init(wav2lip_checkpoint_path, device="cuda"):
 
 
 # function to generate speech
-def predict(face_alignment_detector, wav2lip_model, images_cv, audio_pydub, args, device="cuda"):
+def predict(face_alignment_detector, wav2lip_model, images_cv, audio_pydub, video_fps,
+            device="cuda",
+            mouth_mask_path='./mouth_mask.npy',
+            face_det_batch_size=50,
+            face_det_confidence_score_min=0.80,
+            pads=[0,0,0,0]):
+    data = api.preprocess_data(face_alignment_detector, images_cv, audio_pydub, video_fps, face_det_batch_size, face_det_confidence_score_min, pads)
+    predictions = api.process_in_batches(data, 10,
+                                         lambda x: api.process_wav2lip_batch(x, wav2lip_model, device=device))
+    processed_frames = api.postprocess_wav2lip(images_cv, predictions, data, mouth_mask_path)
 
-
-
-    return True
+    return processed_frames
 
 def repl_test():
     wav2lip_checkpoint_path = './wav2lip_gan.pth'
-    device = "cuda"
+    device = "cpu"
     mouth_mask_path = './mouth_mask.npy'
 
     # init
-    face_alignment_detector, wav2lip_model = init(wav2lip_checkpoint_path,device)
+    face_alignment_detector, wav2lip_model = init(wav2lip_checkpoint_path, device)
 
     # load tmp data
-    argv = ["--wav2lip_checkpoint_path", "wav2lip_gan.pth", "--face",
-            "./sample_data/input_vid_portrait_orig.m4v", "--audio", "./sample_data/input_audio.wav"]
-    args = api.gen_args(argv)
-    args.pads = [10,10,0,0]
-
-    args.face_det_confidence_score_min = 0.8
-
     video_path = './sample_data/input_vid_portrait_orig.m4v'
-    images_cv, orig_video_fps = api.extract_video_frames(video_path)
-    args.fps = orig_video_fps
+    images_cv, video_fps = api.extract_video_frames(video_path)
     audio_path = "./sample_data/input_audio.wav"
     audio_pydub = AudioSegment.from_wav(audio_path)
 
-
     # predictor
-    data = api.preprocess_data(face_alignment_detector, images_cv, audio_pydub, args)
-    predictions = api.process_in_batches(data, 10,
-                                     lambda x: api.process_wav2lip_batch(x, wav2lip_model, args, device="cuda"))
-    final_frames = api.postprocess_wav2lip(images_cv, predictions, data, mouth_mask_path)
+    processed_frames = predict(face_alignment_detector, wav2lip_model, images_cv, audio_pydub, video_fps, device=device)
 
-    frame_h, frame_w = final_frames[0].shape[:-1]
+
+    # write video to disk
+    outfile = 'temp/final.avi'
+    frame_h, frame_w = processed_frames[0].shape[:-1]
     out = cv2.VideoWriter('temp/result.avi',
-                          cv2.VideoWriter_fourcc(*'DIVX'), args.fps, (frame_w, frame_h))
-
-    for img in final_frames:
+                          cv2.VideoWriter_fourcc(*'DIVX'), video_fps, (frame_w, frame_h))
+    for img in processed_frames:
         out.write(img)
     out.release()
 
     # write the audio segment to disk
 
 
-    command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/result.avi', args.outfile)
+    command = 'ffmpeg -y -i {} -i {} -strict -2 -q:v 1 {}'.format(audio_path, 'temp/result.avi', outfile)
     subprocess.call(command, shell=True)
