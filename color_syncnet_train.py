@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser(description='Code to train the expert lip-sync 
 parser.add_argument("--data_root", help="Root folder of the preprocessed LRS2 dataset", required=True)
 
 parser.add_argument('--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
-parser.add_argument('--checkpoint_path', help='Resumed from this checkpoint', default=None, type=str)
+parser.add_argument('--wav2lip_checkpoint_path', help='Resumed from this checkpoint', default=None, type=str)
 #argv = ['--data_root', '/home/sean/data/AVSpeech/', '--checkpoint_dir', 'checkpoints']
 args = parser.parse_args()
 

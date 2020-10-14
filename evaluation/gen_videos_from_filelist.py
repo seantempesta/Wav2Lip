@@ -18,7 +18,7 @@ parser.add_argument('--filelist', type=str,
 parser.add_argument('--results_dir', type=str, help='Folder to save all results into', 
 									required=True)
 parser.add_argument('--data_root', type=str, required=True)
-parser.add_argument('--checkpoint_path', type=str, 
+parser.add_argument('--wav2lip_checkpoint_path', type=str,
 					help='Name of saved checkpoint to load weights from', required=True)
 
 parser.add_argument('--pads', nargs='+', type=int, default=[0, 0, 0, 0], 

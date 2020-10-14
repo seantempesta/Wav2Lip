@@ -24,7 +24,7 @@ parser.add_argument("--data_root", help="Root folder of the preprocessed LRS2 da
 parser.add_argument('--checkpoint_dir', help='Save checkpoints to this directory', required=True, type=str)
 parser.add_argument('--syncnet_checkpoint_path', help='Load the pre-trained Expert discriminator', required=True, type=str)
 
-parser.add_argument('--checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
+parser.add_argument('--wav2lip_checkpoint_path', help='Resume from this checkpoint', default=None, type=str)
 
 args = parser.parse_args()
 
