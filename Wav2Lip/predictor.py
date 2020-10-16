@@ -34,7 +34,6 @@ def init(wav2lip_checkpoint_path, device="cpu"):
 # function to generate video frames to align with the audio
 def predict(face_alignment_detector, wav2lip_model, images_cv, audio_pydub, video_fps,
             device="cpu",
-            mouth_mask_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), './data/mouth_mask.npy'),
             face_det_batch_size=10,
             face_det_confidence_score_min=0.80,
             wav2lip_batch_size=10,
@@ -43,7 +42,7 @@ def predict(face_alignment_detector, wav2lip_model, images_cv, audio_pydub, vide
     data = api.preprocess_data(face_alignment_detector, images_cv, audio_pydub, video_fps, face_det_batch_size, face_det_confidence_score_min, pads)
     predictions = api.process_in_batches(data, wav2lip_batch_size,
                                          lambda x: api.process_wav2lip_batch(x, wav2lip_model, device=device))
-    processed_frames = api.postprocess_wav2lip(images_cv, predictions, data, mouth_mask_path)
+    processed_frames = api.postprocess_wav2lip(images_cv, predictions, data)
 
     return processed_frames
 

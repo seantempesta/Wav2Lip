@@ -1,5 +1,6 @@
 import math
 import numpy as np
+import pkg_resources
 import scipy, cv2, os, sys, argparse
 
 from Wav2Lip import audio
@@ -265,9 +266,10 @@ def process_wav2lip_batch(data, wav2lip_model, device="cuda"):
 # - resizes the predicted face to match the original face crop size (96x96x3 -> ?x?x3)
 # - generates a mouth alpha mask using facial landmarks and blends the generated face back into the orignal
 # - merges together original frames with the predicted frames for a final set
-def postprocess_wav2lip(images_cv, predictions, data, mouth_mask_path):
+def postprocess_wav2lip(images_cv, predictions, data):
 
     # load a pre-saved mouth_mask (for alpha blending)
+    mouth_mask_path = pkg_resources.resource_stream(__name__, 'data/mouth_mask.npy')
     mouth_mask = np.load(mouth_mask_path)
 
     # get a dictionary for frame id to predictions, face_boxes, faces, and facial landmarks
