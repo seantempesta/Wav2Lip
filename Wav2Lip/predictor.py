@@ -1,11 +1,12 @@
+import os
 import subprocess
 import cv2
 import face_alignment
 import torch
 from pydub import AudioSegment
 
-from models import Wav2Lip
-import predictor_api as api
+from . import predictor_api as api
+from .models import Wav2Lip
 
 
 # Initialize face detection and Wav2Lip models
@@ -33,7 +34,7 @@ def init(wav2lip_checkpoint_path, device="cpu"):
 # function to generate video frames to align with the audio
 def predict(face_alignment_detector, wav2lip_model, images_cv, audio_pydub, video_fps,
             device="cpu",
-            mouth_mask_path='./mouth_mask.npy',
+            mouth_mask_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), './data/mouth_mask.npy'),
             face_det_batch_size=10,
             face_det_confidence_score_min=0.80,
             wav2lip_batch_size=10,
@@ -50,7 +51,7 @@ def repl_test():
     from codetiming import Timer
     wav2lip_checkpoint_path = './wav2lip_gan.pth'
     device = "cpu"
-    mouth_mask_path = './mouth_mask.npy'
+    mouth_mask_path = './data/mouth_mask.npy'
 
     # init
     face_alignment_detector, wav2lip_model = init(wav2lip_checkpoint_path, device)

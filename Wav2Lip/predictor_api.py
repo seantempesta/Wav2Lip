@@ -1,9 +1,8 @@
 import math
-import tempfile
-import urllib
-from urllib.parse import urlparse
 import numpy as np
-import scipy, cv2, os, sys, argparse, audio
+import scipy, cv2, os, sys, argparse
+
+from Wav2Lip import audio
 from pydub import AudioSegment
 from tqdm import tqdm
 import torch
@@ -73,37 +72,6 @@ def extract_video_frames(video_path):
         orig_images_cv.append(frame)
 
     return orig_images_cv, orig_video_fps
-
-# downloads and extracts the audio and video frames
-def download_and_extract_audio_and_video_frames(video_url):
-
-    # download the video to a tempfile
-    video_url_parsed = urlparse(video_url)
-    video_file_path, video_file_ext = os.path.splitext(video_url_parsed.path)
-    video_file_name = os.path.basename(video_url_parsed.path)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_video_path = os.path.join(tmp_dir, video_file_name)
-        with urllib.request.urlopen(video_url) as response, open(tmp_video_path, 'wb') as video_file:
-            data = response.read()  # a `bytes` object
-            video_file.write(data)
-
-            # extract audio and convert to proper frame rate
-            orig_audio_pydub = AudioSegment.from_file(tmp_video_path, video_file_ext[1:])
-            #converted_audio_pydub = orig_audio_pydub.set_frame_rate(AUDIO_FRAME_RATE)
-            #assert(converted_audio_pydub.frame_rate == AUDIO_FRAME_RATE)
-
-            # extract video into frames
-            orig_video_stream = cv2.VideoCapture(tmp_video_path)
-            orig_video_fps = orig_video_stream.get(cv2.CAP_PROP_FPS)
-            orig_video_frames = []
-            while True:
-                still_reading, frame = orig_video_stream.read()
-                if not still_reading:
-                    orig_video_stream.release()
-                    break
-                orig_video_frames.append(frame)
-
-            return orig_audio_pydub, orig_video_frames, orig_video_fps
 
 
 # generic function for processing data at a specified batch size
